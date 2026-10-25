@@ -20,6 +20,8 @@ use std::collections::HashMap;
 pub const ITERATIONS: usize = 160;
 /// Iterations and starting temperature of a warm start.
 pub const WARM_ITERATIONS: usize = 30;
+/// Fewest iterations of a cold approximate layout.
+const MIN_ITERATIONS: usize = 60;
 const WARM_TEMP: f64 = 0.03;
 /// Radius of the orphan ring; linked notes stay inside `INNER`.
 pub const RING: f64 = 1.0;
@@ -35,7 +37,7 @@ const UNSCALE: f64 = 0.5 / INNER;
 pub const EXACT_MAX_LINKED: usize = 150;
 /// Barnes-Hut opening angle: a group of notes counts as one when its size
 /// over its distance is below this.
-const THETA: f64 = 0.9;
+const THETA: f64 = 1.2;
 /// A warm start needs this share of the linked notes to be known.
 const WARM_MIN_KNOWN: f64 = 0.5;
 /// Seed of the map layout: fixed, so the same notes give the same picture.
@@ -138,13 +140,19 @@ fn layout_with(
             slot[i] = k;
         }
         let mut rng = Rng(seed | 1);
-        let (mut p, iterations, mut temp) = match known {
+        let (mut p, mut iterations, mut temp) = match known {
             Some(f) => match warm_start(&linked, &pairs, &slot, f, &mut rng) {
                 Some(p) => (p, WARM_ITERATIONS, WARM_TEMP),
                 None => (cold_start(m, &mut rng), ITERATIONS, 0.1),
             },
             None => (cold_start(m, &mut rng), ITERATIONS, 0.1),
         };
+        // The approximate regime also settles in fewer iterations: they
+        // cost more the more notes there are. (A warm start has few already.)
+        if m > exact_max && iterations == ITERATIONS {
+            let scale = (exact_max as f64 / m as f64).sqrt();
+            iterations = ((ITERATIONS as f64 * scale) as usize).clamp(MIN_ITERATIONS, ITERATIONS);
+        }
         let k = (1.0 / m as f64).sqrt();
         let cool = temp / (iterations as f64 + 1.0);
         let mut disp = vec![(0.0f64, 0.0f64); m];
@@ -219,8 +227,8 @@ fn layout_with(
 const MAX_DEPTH: usize = 24;
 const NO_KID: usize = usize::MAX;
 
-/// A quadtree square: how many notes it holds, their centre of mass, and
-/// its four quarters. Leaves keep their notes.
+/// A quadtree square: how many notes it holds, their centre of mass, its
+/// four quarters, and (for a leaf) its notes as a range of the tree's order.
 struct Quad {
     cx: f64,
     cy: f64,
@@ -228,52 +236,72 @@ struct Quad {
     mass: f64,
     com: (f64, f64),
     kids: [usize; 4],
-    ids: Vec<usize>,
+    start: usize,
+    len: usize,
 }
 
+/// Builds the square holding `order` (the notes in that square, which sit at
+/// `base..` of the full order) and, in place, sorts them into quarters.
 fn build_tree(
     nodes: &mut Vec<Quad>,
     p: &[(f64, f64)],
-    ids: Vec<usize>,
+    order: &mut [usize],
+    scratch: &mut [usize],
+    base: usize,
     (cx, cy, half): (f64, f64, f64),
     depth: usize,
 ) -> usize {
-    let mass = ids.len() as f64;
-    let (sx, sy) = ids
+    let len = order.len();
+    let (sx, sy) = order
         .iter()
         .fold((0.0, 0.0), |a, &i| (a.0 + p[i].0, a.1 + p[i].1));
     let id = nodes.len();
-    let leaf = ids.len() <= 1 || depth >= MAX_DEPTH;
     nodes.push(Quad {
         cx,
         cy,
         half,
-        mass,
-        com: (sx / mass, sy / mass),
+        mass: len as f64,
+        com: (sx / len as f64, sy / len as f64),
         kids: [NO_KID; 4],
-        ids: Vec::new(),
+        start: base,
+        len,
     });
-    if leaf {
-        nodes[id].ids = ids;
+    if len <= 1 || depth >= MAX_DEPTH {
         return id;
     }
-    let mut quarter: [Vec<usize>; 4] = Default::default();
-    for i in ids {
-        let q = usize::from(p[i].0 >= cx) + 2 * usize::from(p[i].1 >= cy);
-        quarter[q].push(i);
+    let quarter = |i: usize| usize::from(p[i].0 >= cx) + 2 * usize::from(p[i].1 >= cy);
+    let mut counts = [0usize; 4];
+    for &i in order.iter() {
+        counts[quarter(i)] += 1;
     }
+    let mut next = [
+        0,
+        counts[0],
+        counts[0] + counts[1],
+        counts[0] + counts[1] + counts[2],
+    ];
+    for &i in order.iter() {
+        let q = quarter(i);
+        scratch[next[q]] = i;
+        next[q] += 1;
+    }
+    order.copy_from_slice(&scratch[..len]);
     let h = half / 2.0;
-    for (q, group) in quarter.into_iter().enumerate() {
-        if group.is_empty() {
-            continue;
+    let mut rest = order;
+    let mut at = base;
+    for (q, &n) in counts.iter().enumerate() {
+        let (mine, tail) = rest.split_at_mut(n);
+        rest = tail;
+        if n > 0 {
+            let c = (
+                cx + if q & 1 == 1 { h } else { -h },
+                cy + if q & 2 == 2 { h } else { -h },
+                h,
+            );
+            let kid = build_tree(nodes, p, mine, &mut scratch[..n], at, c, depth + 1);
+            nodes[id].kids[q] = kid;
         }
-        let c = (
-            cx + if q & 1 == 1 { h } else { -h },
-            cy + if q & 2 == 2 { h } else { -h },
-            h,
-        );
-        let kid = build_tree(nodes, p, group, c, depth + 1);
-        nodes[id].kids[q] = kid;
+        at += n;
     }
     id
 }
@@ -290,10 +318,14 @@ fn repel_tree(p: &[(f64, f64)], k2: f64, disp: &mut [(f64, f64)]) {
     }
     let half = ((x1 - x0).max(y1 - y0) / 2.0).max(1e-9) * 1.0001;
     let mut nodes = Vec::with_capacity(p.len() * 2);
+    let mut order: Vec<usize> = (0..p.len()).collect();
+    let mut scratch = vec![0usize; p.len()];
     build_tree(
         &mut nodes,
         p,
-        (0..p.len()).collect(),
+        &mut order,
+        &mut scratch,
+        0,
         ((x0 + x1) / 2.0, (y0 + y1) / 2.0, half),
         0,
     );
@@ -303,7 +335,7 @@ fn repel_tree(p: &[(f64, f64)], k2: f64, disp: &mut [(f64, f64)]) {
         while let Some(n) = stack.pop() {
             let q = &nodes[n];
             if q.kids == [NO_KID; 4] {
-                for &b in q.ids.iter().filter(|&&b| b != a) {
+                for &b in order[q.start..q.start + q.len].iter().filter(|&&b| b != a) {
                     let (dx, dy) = (p[a].0 - p[b].0, p[a].1 - p[b].1);
                     let f = k2 / (dx * dx + dy * dy).max(1e-6);
                     d.0 += dx * f;

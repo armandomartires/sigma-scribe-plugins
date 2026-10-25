@@ -1,0 +1,11 @@
+[package]
+name = "sigma-plugin-sdk"
+description = "Shared plumbing for Sigma Scribe WASM plugins: host imports, exports, text helpers."
+version = "1.0.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+[dependencies]
+sigma-plugin-api = { path = "../../../sigma-scribe/crates/plugin-api" }
+sigma-core = { path = "../../../sigma-scribe/crates/core" }

@@ -23,6 +23,9 @@ fn scene(n: usize, links: &[(u32, u32)]) -> Scene {
         edges: links.to_vec(),
         links: links.len() as u32,
         settings: Vec::new(),
+        left: 0,
+        todos: Vec::new(),
+        headings: Vec::new(),
     }
 }
 

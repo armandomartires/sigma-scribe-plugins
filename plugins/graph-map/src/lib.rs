@@ -86,6 +86,7 @@ fn drawn(g: &Graph, redraw: Redraw) -> Frame {
         actions: Vec::new(),
         redraw,
         pending: false,
+        field: None,
     }
 }
 

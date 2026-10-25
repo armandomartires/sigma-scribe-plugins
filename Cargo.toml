@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["plugins/graph-map"]
+members = ["plugins/graph-map", "plugins/sdk", "plugins/contents-pane", "plugins/todo-pane", "plugins/scratch-pane"]
 
 [profile.release]
 opt-level = 3

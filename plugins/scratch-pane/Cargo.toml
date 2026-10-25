@@ -1,0 +1,14 @@
+[package]
+name = "scratch-pane"
+description = "Sigma Scribe drawer pane: Scratch, as a WASM pane plugin."
+version = "1.0.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sigma-plugin-sdk = { path = "../sdk" }
+sigma-core = { path = "../../../sigma-scribe/crates/core" }

@@ -3,17 +3,32 @@
 version = 4
 
 [[package]]
+name = "contents-pane"
+version = "1.0.0"
+dependencies = [
+ "sigma-core",
+ "sigma-plugin-sdk",
+]
+
+[[package]]
 name = "graph-map"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "sigma-core",
  "sigma-plugin-api",
 ]
 
 [[package]]
+name = "scratch-pane"
+version = "1.0.0"
+dependencies = [
+ "sigma-core",
+ "sigma-plugin-sdk",
+]
+
+[[package]]
 name = "sigma-core"
 version = "1.11.1"
-source = "git+https://github.com/armandomartires/sigma-scribe?rev=ec3daec616c6056b2bb42dd180714ec49f60b12b#ec3daec616c6056b2bb42dd180714ec49f60b12b"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -21,7 +36,22 @@ dependencies = [
 [[package]]
 name = "sigma-plugin-api"
 version = "1.11.1"
-source = "git+https://github.com/armandomartires/sigma-scribe?rev=ec3daec616c6056b2bb42dd180714ec49f60b12b#ec3daec616c6056b2bb42dd180714ec49f60b12b"
+
+[[package]]
+name = "sigma-plugin-sdk"
+version = "1.0.0"
+dependencies = [
+ "sigma-core",
+ "sigma-plugin-api",
+]
+
+[[package]]
+name = "todo-pane"
+version = "1.0.0"
+dependencies = [
+ "sigma-core",
+ "sigma-plugin-sdk",
+]
 
 [[package]]
 name = "unicode-segmentation"

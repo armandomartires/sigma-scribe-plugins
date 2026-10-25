@@ -5,6 +5,7 @@
 //! selection, list page) lives here; the app owns the title bar, the close
 //! button and opening notes.
 
+#[macro_use]
 mod host;
 pub mod layout;
 mod progress;
@@ -31,6 +32,8 @@ struct Pending {
     /// Iterations to run per step.
     chunk: usize,
     settings: Settings,
+    /// Steps taken so far (for the log).
+    steps: usize,
 }
 
 /// The reader's settings for this plugin (see `plugin.conf`).
@@ -115,6 +118,15 @@ fn open(scene: Scene) -> (Screen, Frame) {
         .map(|&(a, b)| (a as usize, b as usize))
         .collect();
     let settings = Settings::of(&scene);
+    log!(
+        host::DEBUG,
+        "open: {} notes, {} links; start on {}, labels {}, layout {}",
+        names.len(),
+        links.len(),
+        if settings.map { "Map" } else { "List" },
+        if settings.all_labels { "All" } else { "Auto" },
+        if settings.quick { "Quick" } else { "Best" }
+    );
     match layout::start(&names, &links, settings.quick) {
         layout::Start::Ready(l) => {
             let g = ready(scene, l, links, settings);
@@ -134,6 +146,7 @@ fn open(scene: Scene) -> (Screen, Frame) {
                 build: *b,
                 chunk,
                 settings,
+                steps: 0,
             };
             let f = progress_frame(&p, Redraw::Full);
             (Screen::Building(Box::new(p)), f)
@@ -147,7 +160,15 @@ fn building(mut p: Box<Pending>, ev: Event) -> (Screen, Frame) {
     match ev {
         Event::Step => {
             p.build.job.step(p.chunk);
+            p.steps += 1;
+            let (done, total) = p.build.job.progress();
+            log!(
+                host::DEBUG,
+                "layout: step {}, {done}/{total} iterations",
+                p.steps
+            );
             if p.build.job.is_done() {
+                log!(host::INFO, "layout: built in {} steps", p.steps);
                 let Pending {
                     scene,
                     links,

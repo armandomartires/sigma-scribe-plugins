@@ -502,3 +502,138 @@ fn quick_layout_takes_fewer_steps_worth_of_iterations_and_has_its_own_cache() {
     let f = handle(Event::Open(big_scene(100)));
     assert!(f.pending, "a Quick picture is not used for Best");
 }
+
+// --- logging ---
+
+/// The lines the plugin logged since the last call, and the floor the pretend
+/// host reports (the lowest level it would keep).
+fn logged() -> Vec<(i32, String)> {
+    crate::host::LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+fn set_floor(n: i32) {
+    crate::host::FLOOR.with(|f| f.set(n));
+}
+
+fn build_all(scene: Scene) {
+    let mut f = handle(Event::Open(scene));
+    while f.pending {
+        f = handle(Event::Step);
+    }
+}
+
+fn has(lines: &[(i32, String)], level: i32, text: &str) -> bool {
+    lines.iter().any(|(l, m)| *l == level && m.contains(text))
+}
+
+#[test]
+fn a_new_library_logs_its_milestones_at_their_levels() {
+    clear_cache();
+    set_floor(10);
+    logged();
+    build_all(big_scene(60));
+    let lines = logged();
+    assert!(has(&lines, 10, "open: 60 notes"), "{lines:?}");
+    assert!(has(&lines, 10, "no saved picture"), "{lines:?}");
+    assert!(has(&lines, 20, "building 60 notes in"), "{lines:?}");
+    assert!(has(&lines, 20, "fresh"), "{lines:?}");
+    assert!(has(&lines, 10, "step 1,"), "{lines:?}");
+    assert!(has(&lines, 20, "built in"), "{lines:?}");
+    assert!(
+        lines.iter().all(|(l, _)| *l < 30),
+        "nothing is a problem here"
+    );
+    // The settings are in the open line.
+    clear_cache();
+    logged();
+    let s = with_settings(
+        big_scene(20),
+        &[("view", "List"), ("layout", "Quick"), ("labels", "All")],
+    );
+    build_all(s);
+    let lines = logged();
+    assert!(
+        has(&lines, 10, "start on List, labels All, layout Quick"),
+        "{lines:?}"
+    );
+    assert!(has(&lines, 20, ", quick"), "{lines:?}");
+}
+
+#[test]
+fn a_library_that_was_built_before_says_it_found_the_picture() {
+    clear_cache();
+    set_floor(10);
+    build_all(big_scene(40));
+    logged();
+    build_all(big_scene(40));
+    let lines = logged();
+    assert!(
+        has(&lines, 10, "saved picture found (40 notes)"),
+        "{lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|(_, m)| m.contains("building")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_changed_library_warm_starts_and_says_so() {
+    clear_cache();
+    set_floor(10);
+    build_all(big_scene(80));
+    logged();
+    let mut s = big_scene(81);
+    s.notes[80].name = "zz-new.md".into();
+    build_all(s);
+    let lines = logged();
+    // A changed library has its own key, so nothing is saved for it yet; the
+    // last picture is the starting point, and far fewer iterations run.
+    assert!(has(&lines, 10, "no saved picture"), "{lines:?}");
+    assert!(has(&lines, 20, "30 iterations (warm start)"), "{lines:?}");
+}
+
+#[test]
+fn a_damaged_saved_picture_is_a_warning() {
+    clear_cache();
+    set_floor(10);
+    let scene = big_scene(30);
+    let names: Vec<String> = scene.notes.iter().map(|n| n.name.clone()).collect();
+    let links: Vec<(usize, usize)> = scene
+        .edges
+        .iter()
+        .map(|&(a, b)| (a as usize, b as usize))
+        .collect();
+    crate::host::store(layout::layout_key(&names, &links), b"junk");
+    crate::host::store(0, b"more junk");
+    logged();
+    build_all(scene);
+    let lines = logged();
+    assert!(has(&lines, 30, "saved picture is damaged"), "{lines:?}");
+    assert!(has(&lines, 30, "last picture is damaged"), "{lines:?}");
+    // And it still built a layout.
+    assert!(has(&lines, 20, "built in"), "{lines:?}");
+}
+
+#[test]
+fn the_host_floor_decides_what_is_built_into_a_message() {
+    // The host says nothing would be kept: no line is even formatted.
+    clear_cache();
+    set_floor(100);
+    logged();
+    build_all(big_scene(40));
+    assert!(logged().is_empty());
+    // Only WARNING and worse: a normal build has none.
+    clear_cache();
+    set_floor(30);
+    build_all(big_scene(40));
+    assert!(logged().is_empty());
+    // INFO: the milestones, not the detail.
+    clear_cache();
+    set_floor(20);
+    build_all(big_scene(40));
+    let lines = logged();
+    assert!(has(&lines, 20, "building") && has(&lines, 20, "built in"));
+    assert!(lines.iter().all(|(l, _)| *l >= 20), "{lines:?}");
+    set_floor(10);
+}

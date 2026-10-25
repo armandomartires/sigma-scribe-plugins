@@ -143,6 +143,8 @@ pub struct Job {
     temp: f64,
     cool: f64,
     approx: bool,
+    /// Started from the last picture, not fresh.
+    pub warm: bool,
 }
 
 impl Job {
@@ -187,6 +189,7 @@ impl Job {
             temp: 0.0,
             cool: 0.0,
             approx: m > exact_max,
+            warm: false,
         };
         if m == 0 {
             return job;
@@ -195,7 +198,10 @@ impl Job {
         let mut rng = Rng(seed | 1);
         let (p, mut iterations, temp) = match known {
             Some(f) => match warm_start(&job.linked, &job.pairs, &job.slot, f, &mut rng) {
-                Some(p) => (p, WARM_ITERATIONS, WARM_TEMP),
+                Some(p) => {
+                    job.warm = true;
+                    (p, WARM_ITERATIONS, WARM_TEMP)
+                }
                 None => (cold_start(m, &mut rng), ITERATIONS, 0.1),
             },
             None => (cold_start(m, &mut rng), ITERATIONS, 0.1),
@@ -563,17 +569,41 @@ pub enum Start {
 pub fn start(names: &[String], edges: &[(usize, usize)], quick: bool) -> Start {
     let key = layout_key(names, edges) ^ if quick { QUICK_KEY } else { 0 };
     let hashes: Vec<u64> = names.iter().map(|n| name_hash(n)).collect();
-    if let Some(saved) = host::load(key).as_deref().and_then(decode) {
-        if saved.len() == names.len() && saved.iter().zip(&hashes).all(|(s, h)| s.0 == *h) {
-            return Start::Ready(MapLayout {
-                pos: saved.iter().map(|s| s.1).collect(),
-                orphan: saved.iter().map(|s| s.2).collect(),
-            });
+    let blob = host::load(key);
+    match blob.as_deref().map(decode) {
+        Some(Some(saved)) => {
+            if saved.len() == names.len() && saved.iter().zip(&hashes).all(|(s, h)| s.0 == *h) {
+                log!(
+                    host::DEBUG,
+                    "layout: saved picture found ({} notes)",
+                    names.len()
+                );
+                return Start::Ready(MapLayout {
+                    pos: saved.iter().map(|s| s.1).collect(),
+                    orphan: saved.iter().map(|s| s.2).collect(),
+                });
+            }
+            log!(
+                host::DEBUG,
+                "layout: the library changed since the saved picture"
+            );
         }
+        Some(None) => log!(
+            host::WARNING,
+            "layout: the saved picture is damaged; ignoring it"
+        ),
+        None => log!(host::DEBUG, "layout: no saved picture for this library"),
     }
-    let prev: Option<HashMap<u64, (f64, f64)>> = host::load(LATEST)
-        .as_deref()
-        .and_then(decode)
+    let last = host::load(LATEST);
+    let last = last.as_deref().map(decode);
+    if last == Some(None) {
+        log!(
+            host::WARNING,
+            "layout: the last picture is damaged; starting fresh"
+        );
+    }
+    let prev: Option<HashMap<u64, (f64, f64)>> = last
+        .flatten()
         .map(|v| v.into_iter().filter(|s| !s.2).map(|s| (s.0, s.1)).collect());
     let job = match &prev {
         Some(map) => {
@@ -589,6 +619,14 @@ pub fn start(names: &[String], edges: &[(usize, usize)], quick: bool) -> Start {
         }
         None => Job::new(names.len(), edges, MAP_SEED, None, EXACT_MAX_LINKED, quick),
     };
+    log!(
+        host::INFO,
+        "layout: building {} notes in {} iterations ({}{})",
+        names.len(),
+        job.progress().1,
+        if job.warm { "warm start" } else { "fresh" },
+        if quick { ", quick" } else { "" }
+    );
     Start::Build(Box::new(Build {
         job,
         key,

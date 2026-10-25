@@ -7,14 +7,62 @@
 
 mod host;
 pub mod layout;
+mod progress;
 pub mod view;
 
 use sigma_plugin_api::{Action, Event, Frame, Phase, Redraw, Scene};
 use std::cell::RefCell;
 use view::{Btn, Graph, Target, ZOOMS};
 
+/// The layout is built in about this many steps, so the bar moves that often.
+const STEPS: usize = 12;
+
+/// The screen: building the layout (a progress picture) or ready.
+enum Screen {
+    Building(Box<Pending>),
+    Ready(Box<Graph>),
+}
+
+/// A layout being built, with what the screen needs once it is done.
+struct Pending {
+    scene: Scene,
+    links: Vec<(usize, usize)>,
+    build: layout::Build,
+    /// Iterations to run per step.
+    chunk: usize,
+    settings: Settings,
+}
+
+/// The reader's settings for this plugin (see `plugin.conf`).
+#[derive(Clone, Copy)]
+struct Settings {
+    /// Open on the map (else the list).
+    map: bool,
+    /// Label every node.
+    all_labels: bool,
+    /// Fewer layout iterations.
+    quick: bool,
+}
+
+impl Settings {
+    fn of(scene: &Scene) -> Self {
+        let get = |k: &str| {
+            scene
+                .settings
+                .iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.as_str())
+        };
+        Self {
+            map: get("view") != Some("List"),
+            all_labels: get("labels") == Some("All"),
+            quick: get("layout") == Some("Quick"),
+        }
+    }
+}
+
 thread_local! {
-    static APP: RefCell<Option<Graph>> = const { RefCell::new(None) };
+    static APP: RefCell<Option<Screen>> = const { RefCell::new(None) };
     static INPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static OUTPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
@@ -34,18 +82,93 @@ fn drawn(g: &Graph, redraw: Redraw) -> Frame {
         hits,
         actions: Vec::new(),
         redraw,
+        pending: false,
     }
 }
 
-fn open(scene: Scene) -> Graph {
+/// The progress picture, asking the host to send `Step` when it is idle.
+fn progress_frame(p: &Pending, redraw: Redraw) -> Frame {
+    let (done, total) = p.build.job.progress();
+    Frame {
+        ops: progress::ops(&p.scene, done, total),
+        redraw,
+        pending: true,
+        ..Frame::default()
+    }
+}
+
+fn ready(
+    scene: Scene,
+    layout: layout::MapLayout,
+    links: Vec<(usize, usize)>,
+    st: Settings,
+) -> Graph {
+    Graph::new(scene, layout, links).with_settings(st.map, st.all_labels)
+}
+
+/// Opens the screen: at once when the layout is cached, else as a build.
+fn open(scene: Scene) -> (Screen, Frame) {
     let names: Vec<String> = scene.notes.iter().map(|n| n.name.clone()).collect();
     let links: Vec<(usize, usize)> = scene
         .edges
         .iter()
         .map(|&(a, b)| (a as usize, b as usize))
         .collect();
-    let layout = layout::layout_cached(&names, &links);
-    Graph::new(scene, layout, links)
+    let settings = Settings::of(&scene);
+    match layout::start(&names, &links, settings.quick) {
+        layout::Start::Ready(l) => {
+            let g = ready(scene, l, links, settings);
+            let f = drawn(&g, Redraw::Full);
+            (Screen::Ready(Box::new(g)), f)
+        }
+        layout::Start::Build(b) if b.job.is_done() => {
+            let g = ready(scene, b.finish(), links, settings);
+            let f = drawn(&g, Redraw::Full);
+            (Screen::Ready(Box::new(g)), f)
+        }
+        layout::Start::Build(b) => {
+            let chunk = b.job.progress().1.div_ceil(STEPS).max(1);
+            let p = Pending {
+                scene,
+                links,
+                build: *b,
+                chunk,
+                settings,
+            };
+            let f = progress_frame(&p, Redraw::Full);
+            (Screen::Building(Box::new(p)), f)
+        }
+    }
+}
+
+/// An event while the layout is being built: `Step` does the next piece,
+/// `Back` leaves, anything else just shows the progress again.
+fn building(mut p: Box<Pending>, ev: Event) -> (Screen, Frame) {
+    match ev {
+        Event::Step => {
+            p.build.job.step(p.chunk);
+            if p.build.job.is_done() {
+                let Pending {
+                    scene,
+                    links,
+                    build,
+                    settings,
+                    ..
+                } = *p;
+                let g = ready(scene, build.finish(), links, settings);
+                let f = drawn(&g, Redraw::Full);
+                (Screen::Ready(Box::new(g)), f)
+            } else {
+                let f = progress_frame(&p, Redraw::Partial);
+                (Screen::Building(p), f)
+            }
+        }
+        Event::Back => (Screen::Building(p), act(Action::Close)),
+        _ => {
+            let f = progress_frame(&p, Redraw::None);
+            (Screen::Building(p), f)
+        }
+    }
 }
 
 impl Graph {
@@ -145,49 +268,62 @@ impl Graph {
 
 /// Handles one event and answers with the screen as it is now.
 pub fn handle(ev: Event) -> Frame {
-    if let Event::Open(scene) = ev {
-        let g = open(scene);
-        let f = drawn(&g, Redraw::Full);
-        APP.with(|a| *a.borrow_mut() = Some(g));
-        return f;
-    }
     APP.with(|a| {
-        let mut a = a.borrow_mut();
-        let Some(g) = a.as_mut() else {
-            return Frame::default();
-        };
-        let r = match ev {
-            Event::Open(_) => None,
-            Event::Back => return act(Action::Close),
-            Event::Tap { x, y } => match g.tap(x, y) {
-                Ok(r) => r,
-                Err(action) => return act(action),
-            },
-            Event::PageTurn { forward } => g.page(forward),
-            Event::Wheel { dy, .. } => {
-                if g.map {
-                    g.zoom_step(dy > 0)
-                } else {
-                    g.page(dy < 0)
-                }
+        let mut slot = a.borrow_mut();
+        if let Event::Open(scene) = ev {
+            let (screen, frame) = open(scene);
+            *slot = Some(screen);
+            return frame;
+        }
+        match slot.take() {
+            None => Frame::default(),
+            Some(Screen::Building(p)) => {
+                let (screen, frame) = building(p, ev);
+                *slot = Some(screen);
+                frame
             }
-            Event::Drag { phase, x, y } => match phase {
-                Phase::Start => {
-                    let area = g.geo().area;
-                    g.drag = (g.map && area.contains(x, y)).then_some((x, y));
-                    None
-                }
-                Phase::Move | Phase::End => match g.drag {
-                    Some((x0, y0)) => {
-                        g.drag = (phase == Phase::Move).then_some((x, y));
-                        g.pan_by(x - x0, y - y0)
-                    }
-                    None => None,
-                },
-            },
-        };
-        drawn(g, r.unwrap_or(Redraw::None))
+            Some(Screen::Ready(mut g)) => {
+                let frame = on_ready(&mut g, ev);
+                *slot = Some(Screen::Ready(g));
+                frame
+            }
+        }
     })
+}
+
+/// An event on the finished screen.
+fn on_ready(g: &mut Graph, ev: Event) -> Frame {
+    let r = match ev {
+        Event::Open(_) | Event::Step => None,
+        Event::Back => return act(Action::Close),
+        Event::Tap { x, y } => match g.tap(x, y) {
+            Ok(r) => r,
+            Err(action) => return act(action),
+        },
+        Event::PageTurn { forward } => g.page(forward),
+        Event::Wheel { dy, .. } => {
+            if g.map {
+                g.zoom_step(dy > 0)
+            } else {
+                g.page(dy < 0)
+            }
+        }
+        Event::Drag { phase, x, y } => match phase {
+            Phase::Start => {
+                let area = g.geo().area;
+                g.drag = (g.map && area.contains(x, y)).then_some((x, y));
+                None
+            }
+            Phase::Move | Phase::End => match g.drag {
+                Some((x0, y0)) => {
+                    g.drag = (phase == Phase::Move).then_some((x, y));
+                    g.pan_by(x - x0, y - y0)
+                }
+                None => None,
+            },
+        },
+    };
+    drawn(g, r.unwrap_or(Redraw::None))
 }
 
 #[no_mangle]

@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "graph-map"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "sigma-core",
  "sigma-plugin-api",
@@ -13,7 +13,7 @@ dependencies = [
 [[package]]
 name = "sigma-core"
 version = "1.11.1"
-source = "git+https://github.com/armandomartires/sigma-scribe?rev=31fe0c4058b36336222b898aebcf1484139a07e9#31fe0c4058b36336222b898aebcf1484139a07e9"
+source = "git+https://github.com/armandomartires/sigma-scribe?rev=a269e0911e49bba523b5cde72906d8edccc1bbd9#a269e0911e49bba523b5cde72906d8edccc1bbd9"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -21,7 +21,7 @@ dependencies = [
 [[package]]
 name = "sigma-plugin-api"
 version = "1.11.1"
-source = "git+https://github.com/armandomartires/sigma-scribe?rev=31fe0c4058b36336222b898aebcf1484139a07e9#31fe0c4058b36336222b898aebcf1484139a07e9"
+source = "git+https://github.com/armandomartires/sigma-scribe?rev=a269e0911e49bba523b5cde72906d8edccc1bbd9#a269e0911e49bba523b5cde72906d8edccc1bbd9"
 
 [[package]]
 name = "unicode-segmentation"

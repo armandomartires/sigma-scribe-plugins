@@ -73,6 +73,8 @@ pub struct Graph {
     pub first: usize,
     /// Where the last drag event was.
     pub drag: Option<(i32, i32)>,
+    /// Setting "Labels: All": a label on every node, however crowded.
+    pub all_labels: bool,
 }
 
 /// Short label for a note path: file stem.
@@ -97,7 +99,15 @@ impl Graph {
             selected: None,
             first: 0,
             drag: None,
+            all_labels: false,
         }
+    }
+
+    /// Applies the reader's settings: the view it opens in and the labels.
+    pub fn with_settings(mut self, map: bool, all_labels: bool) -> Self {
+        self.map = map;
+        self.all_labels = all_labels;
+        self
     }
 
     fn s(&self) -> Px {
@@ -149,6 +159,9 @@ impl Graph {
     }
 
     fn labels_all(&self, n: usize, scale: f64) -> bool {
+        if self.all_labels {
+            return true;
+        }
         let spacing = scale * 1.8 / (n.max(1) as f64).sqrt();
         spacing >= f64::from(self.s().px(150.0))
     }

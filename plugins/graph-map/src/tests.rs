@@ -22,11 +22,18 @@ fn scene(n: usize, links: &[(u32, u32)]) -> Scene {
             .collect(),
         edges: links.to_vec(),
         links: links.len() as u32,
+        settings: Vec::new(),
     }
 }
 
+/// Opens the screen and lets a first-time layout finish, as the host does by
+/// sending `Step` when idle; returns the finished screen's frame.
 fn open(n: usize, links: &[(u32, u32)]) -> Frame {
-    handle(Event::Open(scene(n, links)))
+    let mut f = handle(Event::Open(scene(n, links)));
+    while f.pending {
+        f = handle(Event::Step);
+    }
+    f
 }
 
 fn centre(f: &Frame, label: &str) -> (i32, i32) {
@@ -259,4 +266,239 @@ fn garbage_input_is_an_empty_frame_not_a_crash() {
         Err(_) => Frame::default(),
     };
     assert_eq!(f, Frame::default());
+}
+
+// --- building in steps, and settings ---
+
+fn big_scene(n: usize) -> Scene {
+    let links: Vec<(u32, u32)> = (0..n as u32).map(|i| (i, (i * 7 + 3) % n as u32)).collect();
+    scene(n, &links)
+}
+
+fn clear_cache() {
+    crate::host::CACHE.with(|c| c.borrow_mut().clear());
+}
+
+/// The bar's fill: the widest ink rectangle in the progress picture.
+fn bar_fill(f: &Frame) -> i32 {
+    f.ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Fill {
+                r,
+                c: sigma_plugin_api::Tone::Ink,
+            } => Some(r.w),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+#[test]
+fn a_new_library_builds_in_steps_with_a_growing_bar() {
+    clear_cache();
+    let first = handle(Event::Open(big_scene(60)));
+    assert!(first.pending, "the host must send Step");
+    assert_eq!(first.redraw, Redraw::Full);
+    assert!(first.hits.is_empty() && first.actions.is_empty());
+    assert!(first
+        .ops
+        .iter()
+        .any(|o| matches!(o, Op::Text { s, .. } if s.contains("Building"))));
+    assert!(first
+        .ops
+        .iter()
+        .any(|o| matches!(o, Op::Text { s, .. } if s == "0 %")));
+    let mut fills = vec![bar_fill(&first)];
+    let mut steps = 0;
+    let done = loop {
+        let f = handle(Event::Step);
+        steps += 1;
+        assert!(steps <= 40, "it must finish");
+        if !f.pending {
+            break f;
+        }
+        assert_eq!(f.redraw, Redraw::Partial, "bar updates are partial");
+        fills.push(bar_fill(&f));
+    };
+    assert!(
+        (8..=14).contains(&steps),
+        "about {STEPS} steps, got {steps}"
+    );
+    assert!(
+        fills.windows(2).all(|w| w[0] <= w[1]),
+        "the bar never shrinks: {fills:?}"
+    );
+    assert!(fills.last().unwrap() > fills.first().unwrap());
+    assert_eq!(
+        done.redraw,
+        Redraw::Full,
+        "the finished screen repaints fully"
+    );
+    assert!(
+        done.hits.iter().any(|h| h.label == "Zoom+"),
+        "the real screen"
+    );
+    // Once built, a stray Step changes nothing and asks for nothing.
+    let idle = handle(Event::Step);
+    assert!(!idle.pending && idle.redraw == Redraw::None && idle.actions.is_empty());
+}
+
+#[test]
+fn building_in_steps_gives_the_same_picture_as_at_once() {
+    clear_cache();
+    let scene = big_scene(60);
+    handle(Event::Open(scene.clone()));
+    let stepped = loop {
+        let f = handle(Event::Step);
+        if !f.pending {
+            break f;
+        }
+    };
+    // The cache hit path of a second open draws from the saved picture.
+    let again = handle(Event::Open(scene));
+    assert!(!again.pending, "now cached: no build");
+    assert_eq!(stepped.ops, again.ops, "same layout, same picture");
+}
+
+#[test]
+fn an_unchanged_library_opens_at_once_the_second_time() {
+    clear_cache();
+    let f = handle(Event::Open(big_scene(40)));
+    assert!(f.pending);
+    while handle(Event::Step).pending {}
+    let f = handle(Event::Open(big_scene(40)));
+    assert!(
+        !f.pending && f.redraw == Redraw::Full,
+        "straight to the screen"
+    );
+    assert!(f.hits.iter().any(|h| h.label == "Map"));
+}
+
+#[test]
+fn events_while_building_keep_it_going_and_back_leaves() {
+    clear_cache();
+    handle(Event::Open(big_scene(60)));
+    for ev in [
+        Event::Tap { x: 700, y: 900 },
+        Event::PageTurn { forward: true },
+        Event::Wheel { x: 0, y: 0, dy: 1 },
+        Event::Drag {
+            phase: Phase::Start,
+            x: 1,
+            y: 700,
+        },
+    ] {
+        let f = handle(ev.clone());
+        assert!(f.pending, "{ev:?} must not stop the build");
+        assert_eq!(f.redraw, Redraw::None);
+        assert!(f.actions.is_empty());
+    }
+    let f = handle(Event::Back);
+    assert_eq!(f.actions, vec![Action::Close]);
+    // Leaving mid-build and opening again starts a fresh build.
+    let f = handle(Event::Open(big_scene(60)));
+    assert!(f.pending);
+    assert!(f
+        .ops
+        .iter()
+        .any(|o| matches!(o, Op::Text { s, .. } if s == "0 %")));
+}
+
+#[test]
+fn a_small_change_builds_faster_from_the_last_picture() {
+    clear_cache();
+    handle(Event::Open(big_scene(80)));
+    while handle(Event::Step).pending {}
+    // One more note: a warm start has far fewer iterations than a cold one.
+    let mut s = big_scene(81);
+    s.notes[80].name = "zz-new.md".into();
+    let f = handle(Event::Open(s));
+    assert!(f.pending);
+    let mut steps = 1;
+    while handle(Event::Step).pending {
+        steps += 1;
+    }
+    assert!(steps <= STEPS + 1);
+}
+
+fn with_settings(mut s: Scene, kv: &[(&str, &str)]) -> Scene {
+    s.settings = kv
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    s
+}
+
+#[test]
+fn start_on_list_opens_the_list() {
+    clear_cache();
+    let s = with_settings(big_scene(20), &[("view", "List")]);
+    handle(Event::Open(s.clone()));
+    let f = loop {
+        let f = handle(Event::Step);
+        if !f.pending {
+            break f;
+        }
+    };
+    assert!(
+        f.hits.iter().any(|h| h.label.starts_with("Graph:")),
+        "list rows"
+    );
+    assert!(!f.hits.iter().any(|h| h.label == "Zoom+"));
+    // The default opens the map.
+    clear_cache();
+    handle(Event::Open(big_scene(20)));
+    let f = loop {
+        let f = handle(Event::Step);
+        if !f.pending {
+            break f;
+        }
+    };
+    assert!(f.hits.iter().any(|h| h.label == "Zoom+"));
+}
+
+#[test]
+fn labels_all_labels_every_node() {
+    let count = |kv: &[(&str, &str)]| {
+        clear_cache();
+        handle(Event::Open(with_settings(big_scene(120), kv)));
+        let f = loop {
+            let f = handle(Event::Step);
+            if !f.pending {
+                break f;
+            }
+        };
+        f.ops.iter().filter(|o| matches!(o, Op::Text { s, .. } if s.ends_with(".md") || s.starts_with('n') || s == "a")).count()
+    };
+    let auto = count(&[]);
+    let all = count(&[("labels", "All")]);
+    assert!(all > auto, "all {all} vs auto {auto}");
+}
+
+#[test]
+fn quick_layout_takes_fewer_steps_worth_of_iterations_and_has_its_own_cache() {
+    let total = |kv: &[(&str, &str)]| {
+        clear_cache();
+        let f = handle(Event::Open(with_settings(big_scene(100), kv)));
+        assert!(f.pending);
+        // The bar reads 0 % and ends at 100 %; count the steps it takes.
+        let mut n = 1;
+        while handle(Event::Step).pending {
+            n += 1;
+        }
+        n
+    };
+    let best = total(&[]);
+    let quick = total(&[("layout", "Quick")]);
+    assert!(quick <= best, "quick {quick} vs best {best}");
+    // Best and Quick never share a saved picture.
+    clear_cache();
+    handle(Event::Open(with_settings(
+        big_scene(100),
+        &[("layout", "Quick")],
+    )));
+    while handle(Event::Step).pending {}
+    let f = handle(Event::Open(big_scene(100)));
+    assert!(f.pending, "a Quick picture is not used for Best");
 }

@@ -22,6 +22,10 @@ pub const ITERATIONS: usize = 160;
 pub const WARM_ITERATIONS: usize = 30;
 /// Fewest iterations of a cold approximate layout.
 const MIN_ITERATIONS: usize = 60;
+/// Fewest iterations of a "Quick" layout, which halves the usual number.
+const QUICK_MIN_ITERATIONS: usize = 20;
+/// Mixed into the cache key of a Quick layout, so the two never share one.
+const QUICK_KEY: u64 = 0x9e37_79b9_7f4a_7c15;
 const WARM_TEMP: f64 = 0.03;
 /// Radius of the orphan ring; linked notes stay inside `INNER`.
 pub const RING: f64 = 1.0;
@@ -116,32 +120,81 @@ fn layout_with(
     known: Option<Known>,
     exact_max: usize,
 ) -> MapLayout {
-    let mut deg = vec![0usize; n];
-    let mut pairs: Vec<(usize, usize)> = edges
-        .iter()
-        .filter(|&&(a, b)| a != b && a < n && b < n)
-        .map(|&(a, b)| (a.min(b), a.max(b)))
-        .collect();
-    pairs.sort_unstable();
-    pairs.dedup();
-    for &(a, b) in &pairs {
-        deg[a] += 1;
-        deg[b] += 1;
-    }
-    let linked: Vec<usize> = (0..n).filter(|&i| deg[i] > 0).collect();
-    let mut pos = vec![(0.0, 0.0); n];
-    let mut orphan = vec![false; n];
+    let mut job = Job::new(n, edges, seed, known, exact_max, false);
+    job.step(usize::MAX);
+    job.finish()
+}
 
-    // Force layout over the linked notes, in a square of side 1.
-    let m = linked.len();
-    if m > 0 {
+/// A layout in progress. The force simulation runs a fixed number of
+/// iterations; `step` runs some of them and can be called again later, so a
+/// long layout can show progress and be left. Running every step gives
+/// exactly the layout `layout` returns.
+pub struct Job {
+    n: usize,
+    pairs: Vec<(usize, usize)>,
+    slot: Vec<usize>,
+    linked: Vec<usize>,
+    lone: Vec<usize>,
+    p: Vec<(f64, f64)>,
+    disp: Vec<(f64, f64)>,
+    k: f64,
+    iterations: usize,
+    done: usize,
+    temp: f64,
+    cool: f64,
+    approx: bool,
+}
+
+impl Job {
+    fn new(
+        n: usize,
+        edges: &[(usize, usize)],
+        seed: u64,
+        known: Option<Known>,
+        exact_max: usize,
+        quick: bool,
+    ) -> Self {
+        let mut deg = vec![0usize; n];
+        let mut pairs: Vec<(usize, usize)> = edges
+            .iter()
+            .filter(|&&(a, b)| a != b && a < n && b < n)
+            .map(|&(a, b)| (a.min(b), a.max(b)))
+            .collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        for &(a, b) in &pairs {
+            deg[a] += 1;
+            deg[b] += 1;
+        }
+        let linked: Vec<usize> = (0..n).filter(|&i| deg[i] > 0).collect();
+        let lone: Vec<usize> = (0..n).filter(|&i| deg[i] == 0).collect();
+        let m = linked.len();
         let mut slot = vec![usize::MAX; n];
         for (k, &i) in linked.iter().enumerate() {
             slot[i] = k;
         }
+        let mut job = Self {
+            n,
+            pairs,
+            slot,
+            linked,
+            lone,
+            p: Vec::new(),
+            disp: Vec::new(),
+            k: 0.0,
+            iterations: 0,
+            done: 0,
+            temp: 0.0,
+            cool: 0.0,
+            approx: m > exact_max,
+        };
+        if m == 0 {
+            return job;
+        }
+        // Force layout over the linked notes, in a square of side 1.
         let mut rng = Rng(seed | 1);
-        let (mut p, mut iterations, mut temp) = match known {
-            Some(f) => match warm_start(&linked, &pairs, &slot, f, &mut rng) {
+        let (p, mut iterations, temp) = match known {
+            Some(f) => match warm_start(&job.linked, &job.pairs, &job.slot, f, &mut rng) {
                 Some(p) => (p, WARM_ITERATIONS, WARM_TEMP),
                 None => (cold_start(m, &mut rng), ITERATIONS, 0.1),
             },
@@ -153,14 +206,38 @@ fn layout_with(
             let scale = (exact_max as f64 / m as f64).sqrt();
             iterations = ((ITERATIONS as f64 * scale) as usize).clamp(MIN_ITERATIONS, ITERATIONS);
         }
-        let k = (1.0 / m as f64).sqrt();
-        let cool = temp / (iterations as f64 + 1.0);
-        let mut disp = vec![(0.0f64, 0.0f64); m];
-        let approx = m > exact_max;
-        for _ in 0..iterations {
+        if quick {
+            iterations = (iterations / 2).max(QUICK_MIN_ITERATIONS);
+        }
+        job.p = p;
+        job.disp = vec![(0.0f64, 0.0f64); m];
+        job.k = (1.0 / m as f64).sqrt();
+        job.iterations = iterations;
+        job.temp = temp;
+        job.cool = temp / (iterations as f64 + 1.0);
+        job
+    }
+
+    /// Iterations in all, and how many have run.
+    #[must_use]
+    pub fn progress(&self) -> (usize, usize) {
+        (self.done, self.iterations)
+    }
+
+    #[must_use]
+    pub fn is_done(&self) -> bool {
+        self.done >= self.iterations
+    }
+
+    /// Runs up to `iters` more iterations.
+    pub fn step(&mut self, iters: usize) {
+        let m = self.p.len();
+        let k = self.k;
+        for _ in 0..iters.min(self.iterations - self.done) {
+            let (p, disp) = (&mut self.p, &mut self.disp);
             disp.iter_mut().for_each(|d| *d = (0.0, 0.0));
-            if approx {
-                repel_tree(&p, k * k, &mut disp);
+            if self.approx {
+                repel_tree(p, k * k, disp);
             } else {
                 for a in 0..m {
                     for b in (a + 1)..m {
@@ -174,8 +251,8 @@ fn layout_with(
                     }
                 }
             }
-            for &(a, b) in &pairs {
-                let (a, b) = (slot[a], slot[b]);
+            for &(a, b) in &self.pairs {
+                let (a, b) = (self.slot[a], self.slot[b]);
                 let (dx, dy) = (p[a].0 - p[b].0, p[a].1 - p[b].1);
                 let d = (dx * dx + dy * dy).sqrt().max(1e-3);
                 let f = d / k; // attraction d²/k
@@ -189,39 +266,50 @@ fn layout_with(
                 d.0 -= q.0 * 0.6 * k * m as f64;
                 d.1 -= q.1 * 0.6 * k * m as f64;
             }
-            for (q, d) in p.iter_mut().zip(&disp) {
+            for (q, d) in p.iter_mut().zip(disp.iter()) {
                 let len = (d.0 * d.0 + d.1 * d.1).sqrt().max(1e-9);
-                let step = len.min(temp);
+                let step = len.min(self.temp);
                 q.0 += d.0 / len * step;
                 q.1 += d.1 / len * step;
             }
-            temp -= cool;
-        }
-        // Centre and scale into the inner disc.
-        let (cx, cy) = p.iter().fold((0.0, 0.0), |a, q| {
-            (a.0 + q.0 / m as f64, a.1 + q.1 / m as f64)
-        });
-        let r = p
-            .iter()
-            .map(|q| ((q.0 - cx).powi(2) + (q.1 - cy).powi(2)).sqrt())
-            .fold(0.0f64, f64::max)
-            .max(1e-6);
-        let s = if m == 1 { 0.0 } else { INNER / r };
-        for (kk, &i) in linked.iter().enumerate() {
-            pos[i] = ((p[kk].0 - cx) * s, (p[kk].1 - cy) * s);
+            self.temp -= self.cool;
+            self.done += 1;
         }
     }
 
-    // Orphans: evenly on the ring, in library order, starting at the top.
-    let lone: Vec<usize> = (0..n).filter(|&i| deg[i] == 0).collect();
-    let ring = if m == 0 { INNER } else { RING };
-    for (k, &i) in lone.iter().enumerate() {
-        let a = -std::f64::consts::FRAC_PI_2
-            + std::f64::consts::TAU * k as f64 / lone.len().max(1) as f64;
-        pos[i] = (ring * a.cos(), ring * a.sin());
-        orphan[i] = true;
+    /// Runs what is left and returns the finished layout.
+    #[must_use]
+    pub fn finish(mut self) -> MapLayout {
+        self.step(usize::MAX);
+        let (n, m) = (self.n, self.p.len());
+        let mut pos = vec![(0.0, 0.0); n];
+        let mut orphan = vec![false; n];
+        if m > 0 {
+            // Centre and scale into the inner disc.
+            let p = &self.p;
+            let (cx, cy) = p.iter().fold((0.0, 0.0), |a, q| {
+                (a.0 + q.0 / m as f64, a.1 + q.1 / m as f64)
+            });
+            let r = p
+                .iter()
+                .map(|q| ((q.0 - cx).powi(2) + (q.1 - cy).powi(2)).sqrt())
+                .fold(0.0f64, f64::max)
+                .max(1e-6);
+            let s = if m == 1 { 0.0 } else { INNER / r };
+            for (kk, &i) in self.linked.iter().enumerate() {
+                pos[i] = ((p[kk].0 - cx) * s, (p[kk].1 - cy) * s);
+            }
+        }
+        // Orphans: evenly on the ring, in library order, starting at the top.
+        let ring = if m == 0 { INNER } else { RING };
+        for (k, &i) in self.lone.iter().enumerate() {
+            let a = -std::f64::consts::FRAC_PI_2
+                + std::f64::consts::TAU * k as f64 / self.lone.len().max(1) as f64;
+            pos[i] = (ring * a.cos(), ring * a.sin());
+            orphan[i] = true;
+        }
+        MapLayout { pos, orphan }
     }
-    MapLayout { pos, orphan }
 }
 
 const MAX_DEPTH: usize = 24;
@@ -440,35 +528,84 @@ fn decode(b: &[u8]) -> Option<Vec<Saved>> {
     )
 }
 
+/// A layout being built for these notes, to be finished and cached.
+pub struct Build {
+    pub job: Job,
+    key: u64,
+    names: Vec<String>,
+}
+
+impl Build {
+    /// Runs what is left, caches the picture and returns it.
+    #[must_use]
+    pub fn finish(self) -> MapLayout {
+        let l = self.job.finish();
+        let blob = encode(&self.names, &l);
+        host::store(self.key, &blob);
+        host::store(LATEST, &blob);
+        l
+    }
+}
+
+/// How a layout request starts.
+pub enum Start {
+    /// The library is unchanged: the saved picture, at no cost.
+    Ready(MapLayout),
+    /// A layout to run (warm-started when the library changed a little).
+    Build(Box<Build>),
+}
+
 /// The layout for these notes: from the cache when the library is
-/// unchanged, a warm start when it changed a little, else computed fresh.
+/// unchanged, otherwise a job (a warm start when it changed a little, else
+/// a fresh one) for the caller to run in steps. `quick` halves the
+/// iterations; a quick layout has its own cache entry.
 #[must_use]
-pub fn layout_cached(names: &[String], edges: &[(usize, usize)]) -> MapLayout {
-    let key = layout_key(names, edges);
+pub fn start(names: &[String], edges: &[(usize, usize)], quick: bool) -> Start {
+    let key = layout_key(names, edges) ^ if quick { QUICK_KEY } else { 0 };
     let hashes: Vec<u64> = names.iter().map(|n| name_hash(n)).collect();
     if let Some(saved) = host::load(key).as_deref().and_then(decode) {
         if saved.len() == names.len() && saved.iter().zip(&hashes).all(|(s, h)| s.0 == *h) {
-            return MapLayout {
+            return Start::Ready(MapLayout {
                 pos: saved.iter().map(|s| s.1).collect(),
                 orphan: saved.iter().map(|s| s.2).collect(),
-            };
+            });
         }
     }
     let prev: Option<HashMap<u64, (f64, f64)>> = host::load(LATEST)
         .as_deref()
         .and_then(decode)
         .map(|v| v.into_iter().filter(|s| !s.2).map(|s| (s.0, s.1)).collect());
-    let l = match &prev {
+    let job = match &prev {
         Some(map) => {
             let find = |i: usize| map.get(&hashes[i]).copied();
-            layout_from(names.len(), edges, MAP_SEED, Some(&find))
+            Job::new(
+                names.len(),
+                edges,
+                MAP_SEED,
+                Some(&find),
+                EXACT_MAX_LINKED,
+                quick,
+            )
         }
-        None => layout(names.len(), edges, MAP_SEED),
+        None => Job::new(names.len(), edges, MAP_SEED, None, EXACT_MAX_LINKED, quick),
     };
-    let blob = encode(names, &l);
-    host::store(key, &blob);
-    host::store(LATEST, &blob);
-    l
+    Start::Build(Box::new(Build {
+        job,
+        key,
+        names: names.to_vec(),
+    }))
+}
+
+/// [`start`] run to the end (tests; the screen runs it in steps).
+#[must_use]
+pub fn layout_cached(names: &[String], edges: &[(usize, usize)]) -> MapLayout {
+    match start(names, edges, false) {
+        Start::Ready(l) => l,
+        Start::Build(mut b) => {
+            b.job.step(usize::MAX);
+            b.finish()
+        }
+    }
 }
 
 #[cfg(test)]

@@ -29,6 +29,7 @@ dependencies = [
 [[package]]
 name = "sigma-core"
 version = "1.11.1"
+source = "git+https://github.com/armandomartires/sigma-scribe?rev=c870b044595d0b4b90cccd196b90f92c1cb589a5#c870b044595d0b4b90cccd196b90f92c1cb589a5"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -36,6 +37,7 @@ dependencies = [
 [[package]]
 name = "sigma-plugin-api"
 version = "1.11.1"
+source = "git+https://github.com/armandomartires/sigma-scribe?rev=c870b044595d0b4b90cccd196b90f92c1cb589a5#c870b044595d0b4b90cccd196b90f92c1cb589a5"
 
 [[package]]
 name = "sigma-plugin-sdk"

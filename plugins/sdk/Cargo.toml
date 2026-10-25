@@ -7,5 +7,5 @@ license = "AGPL-3.0-only"
 publish = false
 
 [dependencies]
-sigma-plugin-api = { path = "../../../sigma-scribe/crates/plugin-api" }
-sigma-core = { path = "../../../sigma-scribe/crates/core" }
+sigma-plugin-api = { git = "https://github.com/armandomartires/sigma-scribe", rev = "c870b044595d0b4b90cccd196b90f92c1cb589a5" }
+sigma-core = { git = "https://github.com/armandomartires/sigma-scribe", rev = "c870b044595d0b4b90cccd196b90f92c1cb589a5" }

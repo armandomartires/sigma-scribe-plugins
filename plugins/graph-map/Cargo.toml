@@ -10,8 +10,8 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-sigma-plugin-api = { path = "../../../sigma-scribe/crates/plugin-api" }
+sigma-plugin-api = { git = "https://github.com/armandomartires/sigma-scribe", rev = "c870b044595d0b4b90cccd196b90f92c1cb589a5" }
 
 [dev-dependencies]
 # Tests assert the layout matches the app's built-in one, bit for bit.
-sigma-core = { path = "../../../sigma-scribe/crates/core" }
+sigma-core = { git = "https://github.com/armandomartires/sigma-scribe", rev = "c870b044595d0b4b90cccd196b90f92c1cb589a5" }

@@ -1,0 +1,17 @@
+[package]
+name = "graph-map"
+description = "Sigma Scribe Graph screen: link map and list, as a WASM screen plugin."
+version = "1.0.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sigma-plugin-api = { git = "https://github.com/armandomartires/sigma-scribe", rev = "31fe0c4058b36336222b898aebcf1484139a07e9" }
+
+[dev-dependencies]
+# Tests assert the layout matches the app's built-in one, bit for bit.
+sigma-core = { git = "https://github.com/armandomartires/sigma-scribe", rev = "31fe0c4058b36336222b898aebcf1484139a07e9" }

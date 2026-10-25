@@ -30,5 +30,16 @@ min_app=1.11.0
 api=1
 ```
 
-Plugins are data only; no code runs. Each plugin keeps its own licence
+A plugin can declare settings of its own, one line each, shown on its page in
+Settings → Plugins while it is on (two to four options, at most eight):
+
+```
+setting=view|Start on|Map,List|Map      # key | label | options | default
+```
+
+`kind=screen` plugins (a full-screen body such as the Graph) also name their
+WebAssembly module with `entry=graph.wasm` and are built with
+`scripts/build-plugin.sh <id>`.
+
+Data packs run no code. Each plugin keeps its own licence
 notice inside its folder.

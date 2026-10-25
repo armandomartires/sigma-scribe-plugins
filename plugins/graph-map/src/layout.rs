@@ -27,6 +27,15 @@ pub const INNER: f64 = 0.8;
 /// Saved positions are scaled into the disc; the force simulation works
 /// in a square of side 1, whose notes spread about 0.5 from the centre.
 const UNSCALE: f64 = 0.5 / INNER;
+/// Up to this many linked notes the app's exact all-pairs repulsion runs
+/// (so small libraries draw exactly what the built-in Graph draws). Above
+/// it, repulsion is approximated with a quadtree (Barnes-Hut): the exact
+/// loop is quadratic, and the WASM interpreter is about 45 times slower
+/// than native code.
+pub const EXACT_MAX_LINKED: usize = 150;
+/// Barnes-Hut opening angle: a group of notes counts as one when its size
+/// over its distance is below this.
+const THETA: f64 = 0.9;
 /// A warm start needs this share of the linked notes to be known.
 const WARM_MIN_KNOWN: f64 = 0.5;
 /// Seed of the map layout: fixed, so the same notes give the same picture.
@@ -93,6 +102,18 @@ pub fn layout(n: usize, edges: &[(usize, usize)], seed: u64) -> MapLayout {
 }
 
 fn layout_from(n: usize, edges: &[(usize, usize)], seed: u64, known: Option<Known>) -> MapLayout {
+    layout_with(n, edges, seed, known, EXACT_MAX_LINKED)
+}
+
+/// [`layout_from`] with the number of linked notes up to which repulsion is
+/// exact (tests force either algorithm).
+fn layout_with(
+    n: usize,
+    edges: &[(usize, usize)],
+    seed: u64,
+    known: Option<Known>,
+    exact_max: usize,
+) -> MapLayout {
     let mut deg = vec![0usize; n];
     let mut pairs: Vec<(usize, usize)> = edges
         .iter()
@@ -127,17 +148,22 @@ fn layout_from(n: usize, edges: &[(usize, usize)], seed: u64, known: Option<Know
         let k = (1.0 / m as f64).sqrt();
         let cool = temp / (iterations as f64 + 1.0);
         let mut disp = vec![(0.0f64, 0.0f64); m];
+        let approx = m > exact_max;
         for _ in 0..iterations {
             disp.iter_mut().for_each(|d| *d = (0.0, 0.0));
-            for a in 0..m {
-                for b in (a + 1)..m {
-                    let (dx, dy) = (p[a].0 - p[b].0, p[a].1 - p[b].1);
-                    let d2 = (dx * dx + dy * dy).max(1e-6);
-                    let f = k * k / d2; // repulsion k²/d, along the unit vector
-                    disp[a].0 += dx * f;
-                    disp[a].1 += dy * f;
-                    disp[b].0 -= dx * f;
-                    disp[b].1 -= dy * f;
+            if approx {
+                repel_tree(&p, k * k, &mut disp);
+            } else {
+                for a in 0..m {
+                    for b in (a + 1)..m {
+                        let (dx, dy) = (p[a].0 - p[b].0, p[a].1 - p[b].1);
+                        let d2 = (dx * dx + dy * dy).max(1e-6);
+                        let f = k * k / d2; // repulsion k²/d, along the unit vector
+                        disp[a].0 += dx * f;
+                        disp[a].1 += dy * f;
+                        disp[b].0 -= dx * f;
+                        disp[b].1 -= dy * f;
+                    }
                 }
             }
             for &(a, b) in &pairs {
@@ -188,6 +214,115 @@ fn layout_from(n: usize, edges: &[(usize, usize)], seed: u64, known: Option<Know
         orphan[i] = true;
     }
     MapLayout { pos, orphan }
+}
+
+const MAX_DEPTH: usize = 24;
+const NO_KID: usize = usize::MAX;
+
+/// A quadtree square: how many notes it holds, their centre of mass, and
+/// its four quarters. Leaves keep their notes.
+struct Quad {
+    cx: f64,
+    cy: f64,
+    half: f64,
+    mass: f64,
+    com: (f64, f64),
+    kids: [usize; 4],
+    ids: Vec<usize>,
+}
+
+fn build_tree(
+    nodes: &mut Vec<Quad>,
+    p: &[(f64, f64)],
+    ids: Vec<usize>,
+    (cx, cy, half): (f64, f64, f64),
+    depth: usize,
+) -> usize {
+    let mass = ids.len() as f64;
+    let (sx, sy) = ids
+        .iter()
+        .fold((0.0, 0.0), |a, &i| (a.0 + p[i].0, a.1 + p[i].1));
+    let id = nodes.len();
+    let leaf = ids.len() <= 1 || depth >= MAX_DEPTH;
+    nodes.push(Quad {
+        cx,
+        cy,
+        half,
+        mass,
+        com: (sx / mass, sy / mass),
+        kids: [NO_KID; 4],
+        ids: Vec::new(),
+    });
+    if leaf {
+        nodes[id].ids = ids;
+        return id;
+    }
+    let mut quarter: [Vec<usize>; 4] = Default::default();
+    for i in ids {
+        let q = usize::from(p[i].0 >= cx) + 2 * usize::from(p[i].1 >= cy);
+        quarter[q].push(i);
+    }
+    let h = half / 2.0;
+    for (q, group) in quarter.into_iter().enumerate() {
+        if group.is_empty() {
+            continue;
+        }
+        let c = (
+            cx + if q & 1 == 1 { h } else { -h },
+            cy + if q & 2 == 2 { h } else { -h },
+            h,
+        );
+        let kid = build_tree(nodes, p, group, c, depth + 1);
+        nodes[id].kids[q] = kid;
+    }
+    id
+}
+
+/// Repulsion k²/d on every note, with distant groups counted as one note at
+/// their centre of mass (Barnes-Hut). Near notes and leaves are exact.
+fn repel_tree(p: &[(f64, f64)], k2: f64, disp: &mut [(f64, f64)]) {
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for q in p {
+        x0 = x0.min(q.0);
+        y0 = y0.min(q.1);
+        x1 = x1.max(q.0);
+        y1 = y1.max(q.1);
+    }
+    let half = ((x1 - x0).max(y1 - y0) / 2.0).max(1e-9) * 1.0001;
+    let mut nodes = Vec::with_capacity(p.len() * 2);
+    build_tree(
+        &mut nodes,
+        p,
+        (0..p.len()).collect(),
+        ((x0 + x1) / 2.0, (y0 + y1) / 2.0, half),
+        0,
+    );
+    let mut stack = Vec::with_capacity(64);
+    for (a, d) in disp.iter_mut().enumerate() {
+        stack.push(0usize);
+        while let Some(n) = stack.pop() {
+            let q = &nodes[n];
+            if q.kids == [NO_KID; 4] {
+                for &b in q.ids.iter().filter(|&&b| b != a) {
+                    let (dx, dy) = (p[a].0 - p[b].0, p[a].1 - p[b].1);
+                    let f = k2 / (dx * dx + dy * dy).max(1e-6);
+                    d.0 += dx * f;
+                    d.1 += dy * f;
+                }
+                continue;
+            }
+            let (dx, dy) = (p[a].0 - q.com.0, p[a].1 - q.com.1);
+            let d2 = dx * dx + dy * dy;
+            let inside = (p[a].0 - q.cx).abs() <= q.half && (p[a].1 - q.cy).abs() <= q.half;
+            if !inside && 4.0 * q.half * q.half < THETA * THETA * d2 {
+                let f = q.mass * k2 / d2.max(1e-6);
+                d.0 += dx * f;
+                d.1 += dy * f;
+            } else {
+                stack.extend(q.kids.iter().copied().filter(|&c| c != NO_KID));
+            }
+        }
+    }
 }
 
 fn cold_start(m: usize, rng: &mut Rng) -> Vec<(f64, f64)> {
@@ -402,6 +537,130 @@ mod tests {
         }
         // And the new picture is itself cached.
         assert_eq!(layout_cached(&nm2, &e2), after);
+    }
+
+    fn spread(l: &MapLayout, e: &[(usize, usize)]) -> (f64, f64, f64) {
+        let d = |a: usize, b: usize| {
+            ((l.pos[a].0 - l.pos[b].0).powi(2) + (l.pos[a].1 - l.pos[b].1).powi(2)).sqrt()
+        };
+        let linked: Vec<usize> = (0..l.pos.len()).filter(|&i| !l.orphan[i]).collect();
+        let (mut sum, mut cnt, mut min) = (0.0, 0, f64::MAX);
+        for (x, &a) in linked.iter().enumerate() {
+            for &b in &linked[x + 1..] {
+                sum += d(a, b);
+                cnt += 1;
+                min = min.min(d(a, b));
+            }
+        }
+        let edge = e
+            .iter()
+            .filter(|&&(a, b)| a != b && !l.orphan[a] && !l.orphan[b])
+            .map(|&(a, b)| d(a, b))
+            .sum::<f64>()
+            / e.len() as f64;
+        (sum / f64::from(cnt), edge, min)
+    }
+
+    #[test]
+    fn the_tree_matches_all_pairs_repulsion() {
+        let mut s = 7u64;
+        let mut r = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+        };
+        let p: Vec<(f64, f64)> = (0..400).map(|_| (r(), r())).collect();
+        let k2 = 1.0 / 400.0;
+        let mut exact = vec![(0.0, 0.0); p.len()];
+        for a in 0..p.len() {
+            for b in 0..p.len() {
+                if a != b {
+                    let (dx, dy) = (p[a].0 - p[b].0, p[a].1 - p[b].1);
+                    let f = k2 / (dx * dx + dy * dy).max(1e-6);
+                    exact[a].0 += dx * f;
+                    exact[a].1 += dy * f;
+                }
+            }
+        }
+        let mut tree = vec![(0.0, 0.0); p.len()];
+        repel_tree(&p, k2, &mut tree);
+        let err: f64 = exact
+            .iter()
+            .zip(&tree)
+            .map(|(a, b)| ((a.0 - b.0).hypot(a.1 - b.1)) / a.0.hypot(a.1).max(1e-9))
+            .sum::<f64>()
+            / p.len() as f64;
+        assert!(err < 0.05, "mean relative force error {err:.4}");
+    }
+
+    #[test]
+    fn small_libraries_stay_exact_and_large_ones_use_the_tree() {
+        let e = graph(150, 260);
+        let m = (0..150)
+            .filter(|&i| e.iter().any(|&(a, b)| a != b && (a == i || b == i)))
+            .count();
+        assert!(m <= EXACT_MAX_LINKED);
+        assert_eq!(
+            layout(150, &e, MAP_SEED),
+            layout_with(150, &e, MAP_SEED, None, usize::MAX)
+        );
+        // Above the threshold the tree runs and is deterministic.
+        let big = graph(400, 700);
+        let a = layout(400, &big, MAP_SEED);
+        assert_eq!(a, layout(400, &big, MAP_SEED));
+        assert_ne!(
+            a,
+            layout_with(400, &big, MAP_SEED, None, usize::MAX),
+            "approximate"
+        );
+    }
+
+    #[test]
+    fn the_approximate_picture_has_the_same_character() {
+        let e = graph(320, 560);
+        let exact = layout_with(320, &e, MAP_SEED, None, usize::MAX);
+        let tree = layout(320, &e, MAP_SEED);
+        let (all_x, edge_x, min_x) = spread(&exact, &e);
+        let (all_t, edge_t, min_t) = spread(&tree, &e);
+        // Linked notes are closer than strangers by about the same factor,
+        // spread over the disc by about the same amount, and not stacked.
+        let (rx, rt) = (edge_x / all_x, edge_t / all_t);
+        assert!(
+            (rt / rx - 1.0).abs() < 0.3,
+            "edge/all ratio {rx:.3} vs {rt:.3}"
+        );
+        assert!(
+            (all_t / all_x - 1.0).abs() < 0.3,
+            "spread {all_x:.3} vs {all_t:.3}"
+        );
+        assert!(
+            min_t > min_x / 10.0 && min_t > 1e-4,
+            "min distance {min_x:.5} vs {min_t:.5}"
+        );
+        for p in &tree.pos {
+            assert!((p.0 * p.0 + p.1 * p.1).sqrt() <= RING + 1e-9);
+        }
+    }
+
+    #[test]
+    fn a_large_library_warm_starts_too() {
+        clear();
+        let (nm, e) = (names(360), graph(360, 620));
+        let before = layout_cached(&nm, &e);
+        let mut nm2 = nm.clone();
+        nm2.push("new.md".into());
+        let mut e2 = e.clone();
+        e2.push((360, 3));
+        e2.push((360, 40));
+        let after = layout_cached(&nm2, &e2);
+        let moved: f64 = (0..360)
+            .filter(|&i| !before.orphan[i] && !after.orphan[i])
+            .map(|i| (before.pos[i].0 - after.pos[i].0).hypot(before.pos[i].1 - after.pos[i].1))
+            .sum::<f64>()
+            / 360.0;
+        assert!(moved < 0.2, "mean move {moved:.3}");
+        assert_eq!(layout_cached(&nm2, &e2), after, "and it is cached");
     }
 
     #[test]

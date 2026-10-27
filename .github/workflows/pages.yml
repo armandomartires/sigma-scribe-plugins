@@ -1,0 +1,38 @@
+# Builds the screen and pane plugins, packages every plugin and publishes the
+# repository index and packages on GitHub Pages, the URL the app reads
+# (sigma-core's INDEX_URL).
+name: pages
+on:
+  push:
+    branches: [pane-plugins]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add wasm32-unknown-unknown
+      - name: Build the wasm plugins
+        run: |
+          for conf in plugins/*/plugin.conf; do
+            id="$(basename "$(dirname "$conf")")"
+            if grep -q '^entry=' "$conf"; then scripts/build-plugin.sh "$id"; fi
+          done
+      - name: Package and index
+        run: scripts/make-index.sh site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

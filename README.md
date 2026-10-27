@@ -43,3 +43,14 @@ WebAssembly module with `entry=graph.wasm` and are built with
 
 Data packs run no code. Each plugin keeps its own licence
 notice inside its folder.
+
+## Publishing
+
+`scripts/make-index.sh [out-dir]` packages every plugin (`<id>-<version>.tar`,
+an uncompressed ustar archive of the plugin's files, `plugin.conf` at its
+root) and writes `index.json` with each package's url, size and sha256 and a
+`serial` that only rises. Build the screen and pane plugins first
+(`scripts/build-plugin.sh <id>`). Publish the out-dir at
+`https://armandomartires.github.io/sigma-scribe-plugins/`. The app checks
+size and sha256 before it unpacks anything. The index itself is not signed
+yet; its integrity rests on https from this site.

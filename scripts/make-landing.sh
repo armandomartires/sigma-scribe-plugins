@@ -87,7 +87,7 @@ footer { margin-top: 3rem; color: var(--mute); font-size: .9rem; }
 <ol>
 <li>Connect the Kobo to Wi-Fi.</li>
 <li>Open <strong>Settings → Plugins → Repository → Check for plugins</strong>.</li>
-<li>Pick a plugin and install it, then switch it on in Settings → Plugins.</li>
+<li>Pick a plugin and tap <strong>Install</strong>. A new plugin starts on; an update keeps its on/off choice and settings.</li>
 </ol>
 
 <h2>Available plugins ($count)</h2>

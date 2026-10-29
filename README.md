@@ -3,13 +3,15 @@
 The only source of plugins for [Sigma Scribe](https://github.com/armandomartires/sigma-scribe):
 fonts, dictionaries, themes, layouts, translations, HWR models and (later) icon packs.
 The app downloads from here and nowhere else.
+Browse the plugins at <https://armandomartires.github.io/sigma-scribe-plugins/>.
 
 ## Layout
 
 ```
 plugins/<id>/plugin.conf     manifest
 plugins/<id>/...             data files, named as the app expects
-index.json                   generated: what the app browses (signed)
+index.json                   generated: what the app browses (not signed)
+index.html                   generated: the landing page, from index.json
 ```
 
 A plugin's files use the same relative paths the app already reads from
@@ -51,6 +53,6 @@ an uncompressed ustar archive of the plugin's files, `plugin.conf` at its
 root) and writes `index.json` with each package's url, size and sha256 and a
 `serial` that only rises. Build the screen and pane plugins first
 (`scripts/build-plugin.sh <id>`). Publish the out-dir at
-`https://armandomartires.github.io/sigma-scribe-plugins/`. The app checks
-size and sha256 before it unpacks anything. The index itself is not signed
-yet; its integrity rests on https from this site.
+`https://armandomartires.github.io/sigma-scribe-plugins/`. `index.html`, the landing page, is generated from the same index. The app
+checks size and sha256 before it unpacks anything. The index itself is not
+signed; its integrity rests on https from this site.

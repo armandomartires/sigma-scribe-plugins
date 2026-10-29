@@ -6,7 +6,8 @@
 # build-plugin.sh) or, for data packs, plugins/<id>/. The package is an
 # uncompressed ustar archive of those files, named <id>-<version>.tar. The
 # index lists each with its size and sha256; `serial` is the time, so it only
-# ever rises. Publish the out-dir at the URL in sigma-core's INDEX_URL.
+# ever rises. index.html, the landing page, is generated from the index by
+# make-landing.sh. Publish the out-dir at the URL in sigma-core's INDEX_URL.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out="${1:-site}"
@@ -35,4 +36,5 @@ for conf in plugins/*/plugin.conf; do
       "$(stat -c %s "$out/$pkg")" "$(sha256sum "$out/$pkg" | cut -d' ' -f1)"
   } >> "$index"
 done
+scripts/make-landing.sh "$out"
 echo "wrote $index"; grep -c '^id=' "$index" | sed 's/$/ plugins/'

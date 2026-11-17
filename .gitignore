@@ -3,3 +3,6 @@
 *~
 dist/
 target/
+
+# GitLab CI cargo cache (CARGO_HOME)
+.cargo-home/

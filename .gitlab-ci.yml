@@ -1,0 +1,95 @@
+# GitLab CI for sigma-scribe-plugins (plan item P1-02, decision D5).
+#
+# These jobs are the canonical gates on every MR and on the default
+# branch. The GitHub Actions workflow in .github/workflows/pages.yml is
+# kept until P1-04, after this pipeline has been green on main. This
+# pipeline builds the wasm plugins and validates the index; it does not
+# publish Pages.
+#
+# Images are pinned by Docker Hub *manifest* digest, recorded 2026-11-17
+# (Europe/Brussels). There is no rust-toolchain.toml yet (that is P1-05);
+# jobs use current stable 1.100.0, matching the app pipeline. To bump it,
+# take the tag digest from
+# https://hub.docker.com/v2/repositories/library/rust/tags/1.XXX.0-bookworm
+# and update RUST_IMAGE.
+#
+# Every cargo invocation that builds or checks uses --locked (Rec 6).
+
+variables:
+  RUST_IMAGE: rust:1.100.0-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+default:
+  image: $RUST_IMAGE
+  interruptible: true
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+stages:
+  - lint
+  - test
+  - build
+
+.cargo_cache:
+  cache:
+    key:
+      files:
+        - Cargo.lock
+      prefix: rust-1.100.0
+    paths:
+      - .cargo-home/registry/
+      - .cargo-home/git/
+      - target/
+
+fmt:
+  stage: lint
+  needs: []
+  script:
+    - rustup component add rustfmt
+    - cargo fmt --all -- --check
+
+clippy:
+  stage: lint
+  extends: .cargo_cache
+  timeout: 30 minutes
+  before_script:
+    - rustup component add clippy
+  script:
+    - cargo clippy --workspace --all-targets --locked -- -D warnings
+
+test:
+  stage: test
+  extends: .cargo_cache
+  timeout: 30 minutes
+  script:
+    - cargo test --workspace --locked
+
+# Build every screen/pane plugin to wasm32, write the index, and
+# validate it. The output stays in the job; nothing is published.
+wasm:index:
+  stage: build
+  extends: .cargo_cache
+  timeout: 30 minutes
+  needs:
+    - job: test
+  before_script:
+    - rustup target add wasm32-unknown-unknown
+  script:
+    - scripts/build-plugin.sh graph-map
+    - scripts/build-plugin.sh contents-pane
+    - scripts/build-plugin.sh todo-pane
+    - scripts/build-plugin.sh scratch-pane
+    - scripts/make-index.sh site-ci
+    - scripts/ci-validate-index.sh site-ci
+  artifacts:
+    name: plugin-index-$CI_COMMIT_SHORT_SHA
+    when: on_success
+    paths:
+      - site-ci/
+    expire_in: 1 week

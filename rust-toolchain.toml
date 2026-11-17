@@ -1,0 +1,9 @@
+# Day-to-day and CI stable toolchain for sigma-scribe-plugins (P1-05).
+# Keep channel in sync with RUST_IMAGE and RUSTUP_TOOLCHAIN in .gitlab-ci.yml.
+# Must match the app repo's rust-toolchain.toml channel.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+targets = [
+    "wasm32-unknown-unknown",
+]

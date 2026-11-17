@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": [
+    "cargo",
+    "dockerfile",
+    "gitlabci",
+    "github-actions",
+    "rust-toolchain"
+  ],
+  "timezone": "Europe/London",
+  "schedule": ["before 6am on monday"],
+  "automerge": false,
+  "pinDigests": true,
+  "dependencyDashboard": true,
+  "packageRules": [
+    {
+      "description": "Group non-major updates",
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "non-major updates",
+      "automerge": false
+    },
+    {
+      "description": "Keep digest pins up to date",
+      "matchUpdateTypes": ["digest"],
+      "pinDigests": true,
+      "automerge": false
+    }
+  ]
+}

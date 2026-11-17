@@ -5,6 +5,8 @@ fonts, dictionaries, themes, layouts, translations, HWR models and (later) icon 
 The app downloads from here and nowhere else.
 Browse the plugins at <https://armandomartires.github.io/sigma-scribe-plugins/>.
 
+To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
+
 ## Layout
 
 ```

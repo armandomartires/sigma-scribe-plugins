@@ -28,7 +28,8 @@ variables:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
-  # Fetch the private app repo pin with the job token (sigma-plugin-api).
+  # Fetch the app pin (sigma-plugin-api) via git; CI rewrites the GitLab
+  # URL to the public GitHub push-mirror (see .gitlab_git_deps).
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 default:

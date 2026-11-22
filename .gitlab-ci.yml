@@ -28,6 +28,8 @@ variables:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
+  # Fetch the private app repo pin with the job token (sigma-plugin-api).
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 default:
   image: $RUST_IMAGE
@@ -46,6 +48,12 @@ stages:
   - test
   - build
   - deps
+
+# Configure git so cargo can clone sigma-plugin-api from this GitLab
+# (the app project is private). Job before_scripts override default
+# before_script, so cargo jobs include this explicitly.
+.gitlab_git_deps: &gitlab_git_deps
+  - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf "https://${CI_SERVER_HOST}/"
 
 # Regular jobs do not run on the Renovate schedule. The renovate job
 # has its own rules and does not inherit these.
@@ -94,6 +102,7 @@ clippy:
     - .regular_rules
   timeout: 30 minutes
   before_script:
+    - *gitlab_git_deps
     - rustup component add clippy
   script:
     - cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -104,6 +113,8 @@ test:
     - .cargo_cache
     - .regular_rules
   timeout: 30 minutes
+  before_script:
+    - *gitlab_git_deps
   script:
     - cargo test --workspace --locked
 
@@ -118,6 +129,7 @@ wasm:index:
   needs:
     - job: test
   before_script:
+    - *gitlab_git_deps
     - rustup target add wasm32-unknown-unknown
   script:
     - scripts/build-plugin.sh graph-map

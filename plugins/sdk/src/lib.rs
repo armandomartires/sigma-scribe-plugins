@@ -3,7 +3,7 @@
 //! pieces of drawing the drawer's panes have in common (header, hint,
 //! "N more", fitting text).
 
-use sigma_core::wrap::{wrap, TextMeasure};
+use sigma_plugin_api::wrap::{wrap, TextMeasure};
 use sigma_plugin_api::{Face, Hit, Op, Rect, Scene, Tone};
 
 pub use sigma_plugin_api as api;
@@ -65,7 +65,7 @@ mod imp {
 
 pub use imp::{ascent_of, translate, width};
 
-/// The host's text metrics as `sigma_core`'s wrapping wants them.
+/// The host's text metrics as `sigma_plugin_api`'s wrapping wants them.
 pub struct Measure {
     pub face: Face,
     pub size: f32,

@@ -678,7 +678,7 @@ mod tests {
             let e = graph(n.max(1), m);
             let e: Vec<_> = e.into_iter().filter(|&(a, b)| a < n && b < n).collect();
             let mine = layout(n, &e, MAP_SEED);
-            let theirs = sigma_core::graphmap::layout(n, &e, MAP_SEED);
+            let theirs = sigma_plugin_api::graphmap::layout(n, &e, MAP_SEED);
             assert_eq!(mine.pos, theirs.pos, "n={n}");
             assert_eq!(mine.orphan, theirs.orphan, "n={n}");
         }
@@ -686,7 +686,7 @@ mod tests {
         let e = [(0, 1), (1, 2)];
         assert_eq!(
             layout_key(&nm, &e),
-            sigma_core::graphmap::layout_key(&nm, &e)
+            sigma_plugin_api::graphmap::layout_key(&nm, &e)
         );
     }
 

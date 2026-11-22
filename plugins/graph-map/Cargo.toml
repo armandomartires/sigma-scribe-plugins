@@ -10,8 +10,5 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-sigma-plugin-api = { git = "https://github.com/armandomartires/sigma-scribe", rev = "c870b044595d0b4b90cccd196b90f92c1cb589a5" }
+sigma-plugin-api = { git = "https://gtlb.sigmareconpt.duckdns.org/sigmarecon/products/sigma-scribe/app.git", rev = "a5703d8daa45139712041fa7d42348da6691a8ad" }
 
-[dev-dependencies]
-# Tests assert the layout matches the app's built-in one, bit for bit.
-sigma-core = { git = "https://github.com/armandomartires/sigma-scribe", rev = "c870b044595d0b4b90cccd196b90f92c1cb589a5" }

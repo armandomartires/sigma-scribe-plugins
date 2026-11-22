@@ -6,7 +6,6 @@ version = 4
 name = "contents-pane"
 version = "1.0.0"
 dependencies = [
- "sigma-core",
  "sigma-plugin-sdk",
 ]
 
@@ -14,7 +13,6 @@ dependencies = [
 name = "graph-map"
 version = "1.3.0"
 dependencies = [
- "sigma-core",
  "sigma-plugin-api",
 ]
 
@@ -22,28 +20,21 @@ dependencies = [
 name = "scratch-pane"
 version = "1.0.0"
 dependencies = [
- "sigma-core",
  "sigma-plugin-sdk",
 ]
 
 [[package]]
-name = "sigma-core"
-version = "1.11.1"
-source = "git+https://github.com/armandomartires/sigma-scribe?rev=c870b044595d0b4b90cccd196b90f92c1cb589a5#c870b044595d0b4b90cccd196b90f92c1cb589a5"
+name = "sigma-plugin-api"
+version = "1.21.1"
+source = "git+https://gtlb.sigmareconpt.duckdns.org/sigmarecon/products/sigma-scribe/app.git?rev=a5703d8daa45139712041fa7d42348da6691a8ad#a5703d8daa45139712041fa7d42348da6691a8ad"
 dependencies = [
  "unicode-segmentation",
 ]
 
 [[package]]
-name = "sigma-plugin-api"
-version = "1.11.1"
-source = "git+https://github.com/armandomartires/sigma-scribe?rev=c870b044595d0b4b90cccd196b90f92c1cb589a5#c870b044595d0b4b90cccd196b90f92c1cb589a5"
-
-[[package]]
 name = "sigma-plugin-sdk"
 version = "1.0.0"
 dependencies = [
- "sigma-core",
  "sigma-plugin-api",
 ]
 
@@ -51,7 +42,6 @@ dependencies = [
 name = "todo-pane"
 version = "1.0.0"
 dependencies = [
- "sigma-core",
  "sigma-plugin-sdk",
 ]
 

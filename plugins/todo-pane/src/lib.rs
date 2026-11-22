@@ -2,7 +2,7 @@
 //! lives in and a filter (All, Open, Done). The check box toggles it; the
 //! text opens the note at its line. The filter is this plugin's own state.
 
-use sigma_core::outline::Filter;
+use sigma_plugin_sdk::api::outline::Filter;
 use sigma_plugin_sdk::api::{Action, Event, Face, Frame, Hit, Op, Rect, Redraw, Scene, Tone};
 use sigma_plugin_sdk::{export, fit_text, hit, inset, translate, width, Pane};
 use std::cell::{Cell, RefCell};

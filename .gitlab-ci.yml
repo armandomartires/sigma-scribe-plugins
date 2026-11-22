@@ -28,6 +28,8 @@ variables:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
+  # Fetch the private app repo pin with the job token (sigma-plugin-api).
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 default:
   image: $RUST_IMAGE
@@ -46,6 +48,18 @@ stages:
   - test
   - build
   - deps
+
+# Cargo.toml pins sigma-plugin-api on the canonical GitLab app repo.
+# Plugins CI job tokens are not allowed to fetch project 30 (403:
+# "Authentication by CI/CD job token not allowed from plugins to
+# project #30"). Adding that allowlist would be a project settings
+# change, which needs Armando's approval, so CI fetches the same
+# SHA from the public GitHub push-mirror instead. insteadOf applies
+# only in the job; the lockfile still names GitLab.
+# Job before_scripts override default before_script, so cargo jobs
+# include this explicitly.
+.gitlab_git_deps: &gitlab_git_deps
+  - git config --global url."https://github.com/armandomartires/sigma-scribe.git".insteadOf "https://${CI_SERVER_HOST}/sigmarecon/products/sigma-scribe/app.git"
 
 # Regular jobs do not run on the Renovate schedule. The renovate job
 # has its own rules and does not inherit these.
@@ -94,6 +108,7 @@ clippy:
     - .regular_rules
   timeout: 30 minutes
   before_script:
+    - *gitlab_git_deps
     - rustup component add clippy
   script:
     - cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -104,6 +119,8 @@ test:
     - .cargo_cache
     - .regular_rules
   timeout: 30 minutes
+  before_script:
+    - *gitlab_git_deps
   script:
     - cargo test --workspace --locked
 
@@ -118,6 +135,7 @@ wasm:index:
   needs:
     - job: test
   before_script:
+    - *gitlab_git_deps
     - rustup target add wasm32-unknown-unknown
   script:
     - scripts/build-plugin.sh graph-map

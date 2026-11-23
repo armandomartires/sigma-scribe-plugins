@@ -157,7 +157,7 @@ wasm:index:
 # is not created, scheduled, or given a token in this change (P1-05).
 renovate:
   stage: deps
-  image: renovate/renovate:44.249.3@sha256:68d74af05716df73410c5bd2dd8b3e6cbb0ebd21db1055d6d222e98a21d2d77a
+  image: renovate/renovate:44.257.9@sha256:d6b65ff3562dd499240b23d34ef806ec7e5fd2675e4236a027dfb36774f2aa75
   timeout: 30 minutes
   resource_group: renovate
   interruptible: false

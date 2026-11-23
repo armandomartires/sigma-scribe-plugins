@@ -10,5 +10,5 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-sigma-plugin-api = { git = "https://gtlb.sigmareconpt.duckdns.org/sigmarecon/products/sigma-scribe/app.git", rev = "a5703d8daa45139712041fa7d42348da6691a8ad" }
+sigma-plugin-api = { git = "https://gtlb.sigmareconpt.duckdns.org/sigmarecon/products/sigma-scribe/app.git", rev = "ae4d7b6d0570c15b6e499f3b700c45918764596f" }
 

@@ -26,7 +26,7 @@ dependencies = [
 [[package]]
 name = "sigma-plugin-api"
 version = "1.21.1"
-source = "git+https://gtlb.sigmareconpt.duckdns.org/sigmarecon/products/sigma-scribe/app.git?rev=a5703d8daa45139712041fa7d42348da6691a8ad#a5703d8daa45139712041fa7d42348da6691a8ad"
+source = "git+https://gtlb.sigmareconpt.duckdns.org/sigmarecon/products/sigma-scribe/app.git?rev=ae4d7b6d0570c15b6e499f3b700c45918764596f#ae4d7b6d0570c15b6e499f3b700c45918764596f"
 dependencies = [
  "unicode-segmentation",
 ]
